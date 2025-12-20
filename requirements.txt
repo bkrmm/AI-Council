@@ -1,0 +1,8 @@
+langchain
+langgraph
+dotenv
+langchain_core
+langchain_google_genai
+langgraph.graph
+typing_extensions
+IPython.display
