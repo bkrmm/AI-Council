@@ -1,2 +1,3 @@
 council_venv/
 .env
+__pycache__
