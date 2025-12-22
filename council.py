@@ -4,13 +4,16 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.graph.state import Literal
 from langgraph.pregel.debug import TypedDict
+from pydantic import BaseModel
+from pydantic import Field
 from typing_extensions import Annotated
-from IPython.display import Image, display
+from IPython.display import Image, display 
 
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=api_key)
 user_prompt = input("Type User Prompt here:  ")
 
 
@@ -20,8 +23,21 @@ class State(TypedDict):
     argument: str
     counter_argument: str
     judgement: str
+    grade: str
     feedback: str
+    FOF : str
     verdict: str
+
+
+class feedback(BaseModel):
+    grade: Literal["factual", "fiction"] = Field(
+        description = "Decide If the Judgement is based in Fact or Fiction.",
+    )
+    feedback: str = Field(
+        description = "If the Judgement is not funny, provide feedback to improve the Judgement.",
+    )
+
+evaluator = llm.with_structured_output(feedback)
 
 
 # Nodes
@@ -36,13 +52,27 @@ def Defender(state: State):
     msg = llm.invoke(f"{Defender_prompt}, USER PROMPT : {state['user_prompt']}, {argument}")
     return {"counter_argument": msg.content}
 
-
 def Judge(state: State):
     argument = state["argument"]
     counter_argument = state["counter_argument"]
     judge_prompt = "Critically examine the Prosecution Argument and Defence Counter-Argument, and come to a unbiased conclusion based on nothing but the arguments provided. Fuck your personal beliefs."
-    msg = llm.invoke(f"system prompt: {judge_prompt}, argument: {argument}, counter_argument: {counter_argument}")
+    if state.get("feedback"):
+        msg = llm.invoke(
+            f"system prompt: {judge_prompt}+You Have been given some feedback work with that primarily., argument: {argument}, counter_argument: {counter_argument}, feedback: {feedback}, Work on the Feedback given by the Jury and fix what ever mistakes are pointed out."
+        )
+    else:
+        msg = llm.invoke(f"system prompt: {judge_prompt}, argument: {argument}, counter_argument: {counter_argument}")
     return {"judgement": msg.content}
+    
+def Jury(state: State):
+    grade = evaluator.invoke(f"Grade the Judgement, {state['judgement']}")
+    return {"FOF": grade.grade, "feedback": grade.feedback}
+    
+def route_judgement(state: State):
+    if state["FOF"] == "factual":
+        return "Accepted"
+    elif state["FOF"] == "fiction":
+        return "Rejected + feedback"
 
 
 # WORKFLOW
@@ -51,24 +81,36 @@ parallel_builder = StateGraph(State)
 parallel_builder.add_node("Prosecutor", Prosecutor)
 parallel_builder.add_node("Defender", Defender)
 parallel_builder.add_node("Judge", Judge)
+parallel_builder.add_node("Jury", Jury)
 
 parallel_builder.add_edge(START, "Prosecutor")
 parallel_builder.add_edge(START, "Defender")
 parallel_builder.add_edge("Prosecutor", "Judge")
 parallel_builder.add_edge("Defender", "Judge")
-parallel_builder.add_edge("Judge", END)
+parallel_builder.add_edge("Judge", "Jury")
+parallel_builder.add_conditional_edges(
+ "Jury",
+ route_judgement,
+ {
+     "Accepted": END,
+     "Rejected + feedback": "Judge"
+ },
+)
 parallel_workflow = parallel_builder.compile()
 
+#Graphically Depict the Nodes Connection
 #display(Image(parallel_workflow.get_graph().draw_mermaid_png()))
 
-#INVOKE
+#Invoke
 state = parallel_workflow.invoke({
     "user_prompt": user_prompt,
     "messages": [],
     "argument": "",
     "counter_argument": "",
+    "grade": "",
     "judgement": "",
     "feedback": "",
+    "FOF": "",
     "verdict": "",
 })
 print(state["judgement"])

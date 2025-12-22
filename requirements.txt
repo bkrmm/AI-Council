@@ -6,3 +6,4 @@ langchain_google_genai
 langgraph.graph
 typing_extensions
 IPython.display
+pydantic
